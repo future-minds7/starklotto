@@ -67,6 +67,9 @@ mod Lottery {
     const STRK_CONTRACT_ADRESS: felt252 =
         0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d;
 
+    const PRIZE_POOL_PERCENTAGE: u256 = 70; // 70% va al pool de premios
+    const ACCUMULATED_PERCENTAGE: u256 = 30; // 30% va al acumulado
+
     #[storage]
     struct Storage {
         ticketPrice: u256,
@@ -143,6 +146,9 @@ mod Lottery {
             let draw = self.draws.read(drawId);
             assert(draw.isActive, 'Draw is not active');
 
+            // Procesar el pago del ticket
+            self.ProcessTicketPayment();
+
             //TODO: We need to process the payment
             let ticket = Ticket {
                 player: get_caller_address(),
@@ -198,7 +204,9 @@ mod Lottery {
             let prize = self.GetFixedPrize(matches);
 
             if prize > 0 {
-                //TODO: We need to process the payment of the prize
+                // Procesar el pago del premio
+                self.ProcessPrizePayment(ticket.player, prize);
+                
                 let mut ticket = ticket;
                 ticket.claimed = true;
                 self.tickets.write((drawId, ticketId), ticket);
@@ -310,6 +318,40 @@ mod Lottery {
             // Verificar que el ticket pertenece al caller
             assert(ticket.player == get_caller_address(), 'Not ticket owner');
             ticket
+        }
+
+        fn ProcessTicketPayment(ref self: ContractState) {
+            let caller = get_caller_address();
+            let contract = get_contract_address();
+            let price = self.ticketPrice.read();
+            
+            // Crear dispatcher para el token STRK
+            let strk = IERC20Dispatcher { contract_address: contract_address_const::<STRK_CONTRACT_ADRESS>() };
+            
+            // Transferir tokens del usuario al contrato
+            strk.transfer_from(caller, contract, price);
+            
+            // Calcular distribución
+            let prize_pool = (price * PRIZE_POOL_PERCENTAGE) / 100;
+            let accumulated = (price * ACCUMULATED_PERCENTAGE) / 100;
+            
+            // Actualizar premio acumulado
+            self.accumulatedPrize.write(self.accumulatedPrize.read() + accumulated);
+        }
+
+        fn ProcessPrizePayment(ref self: ContractState, winner: ContractAddress, amount: u256) {
+            // Crear dispatcher para el token STRK
+            let strk = IERC20Dispatcher { contract_address: contract_address_const::<STRK_CONTRACT_ADRESS>() };
+            
+            // Transferir premio al ganador
+            strk.transfer(winner, amount);
+            
+            // Actualizar premio acumulado si es necesario
+            if amount > self.accumulatedPrize.read() {
+                self.accumulatedPrize.write(0);
+            } else {
+                self.accumulatedPrize.write(self.accumulatedPrize.read() - amount);
+            }
         }
     }
 
